@@ -21,6 +21,48 @@ def find_rollout(session_id):
         matches = glob.glob(pattern2, recursive=True)
     return matches[0] if matches else None
 
+def read_entries(path, end_byte_offset=None):
+    """Read JSONL entries, optionally stopping at a history byte offset."""
+    entries = []
+    with open(path, "rb") as f:
+        while end_byte_offset is None or f.tell() < end_byte_offset:
+            line = f.readline()
+            if not line:
+                break
+            if end_byte_offset is not None and f.tell() > end_byte_offset:
+                raise ValueError(
+                    f"History offset {end_byte_offset} splits a JSONL record in {path}"
+                )
+            line = line.strip()
+            if line:
+                entries.append(json.loads(line))
+    return entries
+
+def load_history(session_id, end_byte_offset=None, seen=None):
+    """Reconstruct forked/paginated history by following history_base."""
+    seen = set() if seen is None else seen
+    if session_id in seen:
+        raise ValueError(f"History cycle detected at session {session_id}")
+    seen.add(session_id)
+
+    path = find_rollout(session_id)
+    if not path:
+        raise FileNotFoundError(f"Session {session_id} not found")
+
+    entries = read_entries(path, end_byte_offset)
+    meta = next((e for e in entries if e.get("type") == "session_meta"), {})
+    history_base = meta.get("payload", {}).get("history_base")
+    if not history_base:
+        return entries, [path]
+
+    parent_id = history_base.get("thread_id")
+    parent_offset = history_base.get("end_byte_offset")
+    if not parent_id or not isinstance(parent_offset, int):
+        raise ValueError(f"Invalid history_base in session {session_id}")
+
+    parent_entries, paths = load_history(parent_id, parent_offset, seen)
+    return parent_entries + entries, paths + [path]
+
 def get_text(content):
     """Extract readable text from content list."""
     if not isinstance(content, list):
@@ -65,15 +107,16 @@ def export(session_id, out_path=None, brief=False):
         print(f"ERROR: session {session_id} not found in ~/.codex/sessions/", file=sys.stderr)
         sys.exit(1)
 
-    entries = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                entries.append(json.loads(line))
+    try:
+        local_entries = read_entries(path)
+        entries, history_paths = load_history(session_id)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     # pull session meta
-    meta = next((e for e in entries if e.get("type") == "session_meta"), {})
+    # Use the requested session's metadata, not its oldest ancestor's.
+    meta = next((e for e in local_entries if e.get("type") == "session_meta"), {})
     meta_p = meta.get("payload", {})
     title = meta_p.get("first_user_message") or session_id
     cwd = meta_p.get("cwd", "")
@@ -88,6 +131,8 @@ def export(session_id, out_path=None, brief=False):
     lines = []
     lines.append(f"# Codex Session Export\n")
     lines.append(f"- **Session ID:** `{session_id}`")
+    if len(history_paths) > 1:
+        lines.append(f"- **History segments:** {len(history_paths)}")
     lines.append(f"- **Time:** {ts}")
     if originator: lines.append(f"- **Source:** {originator}")
     if cwd: lines.append(f"- **Workspace:** `{cwd}`")

@@ -24,5 +24,6 @@ python3 scripts/export.py <session-id> output.md --brief
 
 - Works with **Codex Desktop** (`source=vscode`) and **Codex CLI** (`source=cli/exec`)
 - Session IDs come from `~/.codex/state_5.sqlite` or the rollout filename
+- Forked/paginated sessions are reconstructed from their `history_base` chain
 - System/developer messages and `<environment_context>` blocks are filtered automatically
 - Tool call outputs are included by default; use `--brief` to strip them

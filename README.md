@@ -50,3 +50,7 @@ System/developer messages and injected context blocks are always filtered out.
 ## How sessions are stored
 
 Codex stores all sessions locally at `~/.codex/sessions/**/*.jsonl`. The index lives in `~/.codex/state_5.sqlite`. No cloud required — everything is on your machine.
+
+Forked sessions may store only their new turns in the current rollout file. The
+exporter follows `history_base` recursively and joins the referenced parent
+segments, so the Markdown output includes the complete pre-fork conversation.
